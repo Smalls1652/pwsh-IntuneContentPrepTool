@@ -1,0 +1,3 @@
+[submodule "Microsoft-Win32-Content-Prep-Tool"]
+	path = Microsoft-Win32-Content-Prep-Tool
+	url = https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool.git
