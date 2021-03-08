@@ -2,24 +2,33 @@
 param(
     [Parameter(Position = 0, Mandatory)]
     [ValidateNotNullOrEmpty()]
-    [System.IO.DirectoryInfo]$ContentLocation,
+    [string]$ContentLocation,
     [Parameter(Position = 1, Mandatory)]
     [ValidateNotNullOrEmpty()]
-    [System.IO.FileInfo]$SetupFile,
+    [string]$SetupFile,
     [Parameter(Position = 2)]
     [string]$AppName
 )
 
-begin {
+process {
+
+    #Resolving the paths of the provided files
+    $contentPathResolved = (Resolve-Path -Path $ContentLocation -ErrorAction "Stop").Path
+    $setupFilePathResolved = (Resolve-Path -Path $SetupFile -ErrorAction "Stop").Path
+
+    #Getting the provided files as objects for later use.
+    $contentLocationItem = Get-Item -Path $contentPathResolved
+    $setupFileItem = Get-Item -Path $setupFilePathResolved
+
     #Checking to see if the extension in the setup file is allowed.
-    switch (($SetupFile.Extension -in @(".exe", ".msi", ".ps1"))) {
+    switch (($setupFileItem.Extension -in @(".exe", ".msi", ".ps1"))) {
         $false {
             $PSCmdlet.ThrowTerminatingError(
                 [System.Management.Automation.ErrorRecord]::new(
                     [System.Exception]::new("Setup file is not an '.exe', '.msi', or '.ps1' file."),
                     "InvalidSetupFileType",
                     [System.Management.Automation.ErrorCategory]::InvalidType,
-                    $SetupFile.Name
+                    $setupFileItem.Name
                 )
             )
             break
@@ -79,42 +88,9 @@ begin {
             break
         }
     }
-}
-
-process {
-    <#
-    Check to see if the input for 'ContentLocation' has it's 'Exists' property set to $false or $true.
-
-    We have to do this check because of how .NET creates the 'System.IO.DirectoryInfo' type when using a relative path from the provided input and how PowerShell doesn't update the environment variable for 'CurrentDirectory' when a user changes directories in the console prompt.
-    
-    If the 'CurrentDirectory' environment variable is "C:\Users\Me" and the provided input for 'ContentLocation' is ".\apps\ExampleApp\", it returns a 'System.IO.DirectoryInfo' type object that points to: "C:\Users\Me\apps\ExampleApp\".
-    #>
-    switch ($ContentLocation.Exists) {
-        $false {
-            #If it is set to $false, try to resolve it and update the 'ContentLocation' variable; otherwise, throw a terminating error.
-            Write-Verbose "The directory path provided was a relative path, trying to resolve the path."
-            try {
-                $resolvedPath = (Resolve-Path -Path $ContentLocation.ToString() -ErrorAction "Stop").Path
-            }
-            catch {
-                $errorDetails = $PSItem
-                $PSCmdlet.ThrowTerminatingError(
-                    [System.Management.Automation.ErrorRecord]::new(
-                        $errorDetails.Exception,
-                        "ContentPath.ResolveDirectoryPathFailed",
-                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                        $ContentLocation.ToString()
-                    )
-                )
-            }
-
-            $ContentLocation = [System.IO.DirectoryInfo]::new($resolvedPath)
-            break
-        }
-    }
     
     #Check to make sure that the content location is actually a directory, as the 'System.IO.DirectoryInfo' type can be created from any file type.
-    switch ($ContentLocation.Attributes) {
+    switch ($contentLocationItem.Attributes) {
         "Directory" {
             break
         }
@@ -122,56 +98,25 @@ process {
         Default {
             $PSCmdlet.ThrowTerminatingError(
                 [System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("'$($ContentLocation.FullName)' is not a directory"),
+                    [System.Exception]::new("'$($contentLocationItem.FullName)' is not a directory"),
                     "ContentPath.IsDirectoryFailed",
                     [System.Management.Automation.ErrorCategory]::InvalidType,
-                    $ContentLocation
+                    $contentLocationItem
                 )
             )
             break
         }
     }
 
-    <#
-    Check to see if the input for 'SetupFile' has it's 'Exists' property set to $false or $true.
-
-    We have to do this check because of how .NET creates the 'System.IO.FileInfo' type when using a relative path from the provided input and how PowerShell doesn't update the environment variable for 'CurrentDirectory' when a user changes directories in the console prompt.
-    
-    If the 'CurrentDirectory' environment variable is "C:\Users\Me" and the provided input for 'ContentLocation' is ".\apps\ExampleApp\Setup.exe", it returns a 'System.IO.FileInfo' type object that points to: "C:\Users\Me\apps\ExampleApp\Setup.exe".
-    #>
-    switch ($SetupFile.Exists) {
-        $false {
-            #If it is set to $false, try to resolve it and update the 'SetupFile' variable; otherwise, throw a terminating error.
-            Write-Verbose "The setup file path provided was a relative path, trying to resolve the path."
-            try {
-                $resolvedPath = (Resolve-Path -Path $SetupFile.ToString() -ErrorAction "Stop").Path
-            }
-            catch {
-                $errorDetails = $PSItem
-                $PSCmdlet.ThrowTerminatingError(
-                    [System.Management.Automation.ErrorRecord]::new(
-                        $errorDetails.Exception,
-                        "SetupFile.Check.ResolveFilePathFailed",
-                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                        $SetupFile.ToString()
-                    )
-                )
-            }
-
-            $SetupFile = [System.IO.FileInfo]::new($resolvedPath)
-            break
-        }
-    }
-
     #Check to make sure the setup file exists in the content location's directory. 'IntuneWinAppUtil.exe' will throw an error if the file isn't in the content location's directory, but this will prevent the script from reaching that point. 
-    switch ($SetupFile.Directory.FullName -eq [System.IO.Path]::TrimEndingDirectorySeparator($ContentLocation)) {
+    switch ($setupFileItem.Directory.FullName -eq [System.IO.Path]::TrimEndingDirectorySeparator($contentLocationItem)) {
         $false {
             $PSCmdlet.ThrowTerminatingError(
                 [System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("Provided setup file is not in the content location directory, '$($ContentLocation.FullName)'."),
+                    [System.Exception]::new("Provided setup file is not in the content location directory, '$($contentLocationItem.FullName)'."),
                     "SetupFile.Check.FileIsInContentLocationFailed",
                     [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                    $SetupFile
+                    $setupFileItem
                 )
             )
             break
@@ -185,8 +130,8 @@ process {
     #If 'AppName' is not provided or if there is a whitespace in it, automatically use the content location's directory name.
     switch ([string]::IsNullOrWhiteSpace($AppName)) {
         $true {
-            Write-Warning "An app name wasn't provided. Using the content location's directory name, '$($ContentLocation.Name)', as the app name."
-            $AppName = $ContentLocation.Name
+            Write-Warning "An app name wasn't provided. Using the content location's directory name, '$($contentLocationItem.Name)', as the app name."
+            $AppName = $contentLocationItem.Name
             break
         }
         
@@ -218,7 +163,7 @@ process {
 
         try {
             #Due to some weird issue with quotes in the arguments list for 'Start-Process' and 'IntuneWinAppUtil', we have to dot source the win32 content prep tool.
-            & ".\IntuneWinAppUtil.exe" -c "$($ContentLocation.FullName)" -s "$($SetupFile.Name)" -o "$($appDir.FullName)"
+            & ".\IntuneWinAppUtil.exe" -c "$($contentLocationItem.FullName)" -s "$($setupFileItem.Name)" -o "$($appDir.FullName)"
         }
         catch {
             #Nothing to catch.
